@@ -54,6 +54,7 @@ from vllm.v1.utils import record_function_or_nullcontext
 from vllm.v1.worker.gpu_input_batch import InputBatch
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 from vllm_qaic import envs
+from vllm_qaic.speech import is_qaic_speech_model, requires_real_audio_prefill
 
 try:
     import torch_qaic.profile as qaic_profile
@@ -1584,6 +1585,11 @@ class QaicModelRunnerAoT(GPUModelRunner):
             return
         if self.model.is_vision_encoder:
             return
+        if requires_real_audio_prefill(self.model.config.model_type):
+            logger.debug(
+                "Skipping synthetic warm-up until Cohere ASR receives audio prefill"
+            )
+            return
 
         # Decode (SpD-aware: allocate max_decode_tokens per request)
         decode_bsz = self.model.decode_bsz
@@ -1761,7 +1767,7 @@ class QaicModelRunnerAoT(GPUModelRunner):
 
     def get_supported_generation_tasks(self) -> list[GenerationTask]:
         supported_tasks = list[GenerationTask]()
-        if self.model.config.model_type == "whisper":
+        if is_qaic_speech_model(self.model.config.model_type):
             supported_tasks.append("transcription")
         else:
             supported_tasks.append("generate")

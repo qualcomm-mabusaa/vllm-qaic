@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from vllm_qaic.logger import init_logger
+from vllm_qaic.speech import is_qaic_speech_model
 from vllm.platforms import Platform, PlatformEnum
 from vllm.utils.import_utils import PlaceholderModule
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
@@ -313,14 +314,15 @@ class QaicPlatform(Platform):
                 cache_config.block_size = model_config.max_model_len  # ctx_len
 
         if cls.is_aot:
-            if model_config.hf_config.model_type == "whisper":
+            if is_qaic_speech_model(model_config.hf_config.model_type):
                 # Whisper is an encoder-decoder model: vLLM disables chunked prefill
                 # and sets long_prefill_token_threshold to 0, so the formula above
                 # would give 0. Use max_source_positions (the encoder input length)
                 # as the budget instead, matching the pattern in qaic_whisper.py.
-                scheduler_config.max_num_batched_tokens = getattr(
-                    model_config.hf_config, "max_source_positions", 1500
-                )
+                if model_config.hf_config.model_type == "whisper":
+                    scheduler_config.max_num_batched_tokens = getattr(
+                        model_config.hf_config, "max_source_positions", 1500
+                    )
             else:
                 __prefill_seq_len = override_qaic_config.get("prefill_seq_len", 0)
                 if not __prefill_seq_len:
@@ -459,7 +461,15 @@ class QaicPlatform(Platform):
 
         if cls.is_aot:
             model_type = model_config.hf_config.model_type
-            if model_config.is_multimodal_model and model_type != "whisper":
+            if model_type == "cohere_asr":
+                from vllm_qaic.model_loader.qaic_custom_mm_processor import (
+                    register_qaic_custom_mm_processor,
+                )
+
+                register_qaic_custom_mm_processor(model_type)
+            elif model_config.is_multimodal_model and not is_qaic_speech_model(
+                model_type
+            ):
                 cls._configure_multimodal_model(
                     vllm_config, model_config, scheduler_config, model_type
                 )

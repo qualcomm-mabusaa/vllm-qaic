@@ -13,6 +13,10 @@ import torch
 
 from vllm.config import VllmConfig
 from vllm_qaic.logger import init_logger
+from vllm_qaic.speech import (
+    make_cohere_asr_decode_inputs,
+    prepare_cohere_asr_qpc_inputs,
+)
 from vllm.model_executor.layers.pooler.abstract import Pooler
 from vllm.model_executor.models.interfaces import (
     MultiModalEmbeddings,
@@ -97,6 +101,8 @@ class QaicMultiModal(QaicCausalLM, SupportsMultiModal, SupportsMRoPE):
             "vision_embeds",
             "image_position_ids",
         ]
+        if self.config.model_type == "cohere_asr":
+            mm_input_names.append("feature_lengths")
         for input_name in mm_input_names:
             if result := self.get_io_shape_and_dtype(input_name):
                 self.mm_input_info[input_name] = (result[0], result[1])
@@ -126,8 +132,22 @@ class QaicMultiModal(QaicCausalLM, SupportsMultiModal, SupportsMRoPE):
             for k, v in self.mm_input_info.items():
                 if k == "input_features":
                     _shape = v[0].copy()
-                    _shape[-1] = 1 # Feature vector during decode is 1
-                    self.default_mm_kwargs["input_features"] = np.empty(_shape, dtype=v[1])
+                    _shape[-1] = 1  # Feature vector during decode is 1
+                    self.default_mm_kwargs["input_features"] = np.empty(
+                        _shape, dtype=v[1]
+                    )
+            self.decode_batch_inputs.update(self.default_mm_kwargs)
+        elif self.config.model_type == "cohere_asr":
+            input_features_info = self.mm_input_info.get("input_features")
+            feature_lengths_info = self.mm_input_info.get("feature_lengths")
+            if input_features_info is None or feature_lengths_info is None:
+                raise ValueError(
+                    "Cohere ASR QPC must expose input_features and "
+                    "feature_lengths bindings."
+                )
+            self.default_mm_kwargs = make_cohere_asr_decode_inputs(
+                *input_features_info, *feature_lengths_info
+            )
             self.decode_batch_inputs.update(self.default_mm_kwargs)
 
     def _to_np(self, t, dtype: np.dtype | None = None) -> np.ndarray | list[np.ndarray]:
@@ -343,10 +363,32 @@ class QaicMultiModal(QaicCausalLM, SupportsMultiModal, SupportsMRoPE):
             )
         elif "input_features" in kwargs:
             assert isinstance(kwargs["input_features"], torch.Tensor)
-            input_features_shape = self.mm_input_info["input_features"][0]
-            kwargs["input_features"] = kwargs["input_features"].reshape(
-                input_features_shape
-            )
+            if self.config.model_type == "cohere_asr":
+                input_features_info = self.mm_input_info.get("input_features")
+                feature_lengths_info = self.mm_input_info.get("feature_lengths")
+                feature_lengths = kwargs.pop("length", None)
+                if (
+                    input_features_info is None
+                    or feature_lengths_info is None
+                    or feature_lengths is None
+                ):
+                    raise ValueError(
+                        "Cohere ASR requires input_features, length, and matching "
+                        "QPC bindings."
+                    )
+                kwargs.update(
+                    prepare_cohere_asr_qpc_inputs(
+                        self._to_np(kwargs["input_features"]),
+                        self._to_np(feature_lengths),
+                        *input_features_info,
+                        *feature_lengths_info,
+                    )
+                )
+            else:
+                input_features_shape = self.mm_input_info["input_features"][0]
+                kwargs["input_features"] = kwargs["input_features"].reshape(
+                    input_features_shape
+                )
         # Gemma4: vLLM processor outputs position IDs as "pixel_position_ids"
         # but the QPC binding is named "image_position_ids". Rename before filtering.
         if "pixel_position_ids" in kwargs:
@@ -364,7 +406,7 @@ class QaicMultiModal(QaicCausalLM, SupportsMultiModal, SupportsMRoPE):
             else:
                 raise ValueError(f"Unsupported pixel_values type {type(pixel_values)}")
         elif "input_features" in kwargs:
-            # Audio model. Currently only whisper is supported with a single audio input.
+            # QAIC speech models support a single audio input per request.
             num_mm_inputs = 1
         else:
             raise ValueError(f"Unsupported multimodal inputs {kwargs.keys()}")

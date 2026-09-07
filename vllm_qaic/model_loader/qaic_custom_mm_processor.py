@@ -7,12 +7,18 @@
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from functools import cached_property
 from typing import Any
 
 import torch
 from packaging.version import Version as _Version
 from qwen_vl_utils import smart_resize
-from transformers import BatchFeature, Qwen2VLImageProcessorFast, TensorType
+from transformers import (
+    AutoProcessor,
+    BatchFeature,
+    Qwen2VLImageProcessorFast,
+    TensorType,
+)
 from transformers import __version__ as _transformers_version
 from transformers.image_processing_utils import select_best_resolution
 from transformers.image_transforms import group_images_by_shape, reorder_images
@@ -37,6 +43,12 @@ from vllm.model_executor.models.gemma4_mm import (
     Gemma4ForConditionalGeneration,
     Gemma4MultiModalProcessor,
     Gemma4ProcessingInfo,
+)
+from vllm.model_executor.models.cohere_asr import (
+    CohereASRDummyInputsBuilder,
+    CohereASRMultiModalProcessor,
+    CohereASRProcessingInfo,
+    CohereAsrForConditionalGeneration,
 )
 from vllm.model_executor.models.transformers import (
     TransformersMultiModalForCausalLM,
@@ -100,6 +112,52 @@ Gemma4ForConditionalGeneration.get_placeholder_str = classmethod(
         "image" if modality == "image_embeds" else modality, i
     )
 )
+
+
+class QaicCohereASRMultiModalProcessor(CohereASRMultiModalProcessor):
+    """Use Cohere's HF processor so QPC inputs match QEff export semantics."""
+
+    @cached_property
+    def _qaic_hf_processor(self):
+        model_config = self.info.ctx.model_config
+        return AutoProcessor.from_pretrained(
+            model_config.model,
+            revision=model_config.revision,
+            trust_remote_code=False,
+        )
+
+    def _call_hf_processor(
+        self,
+        prompt: str,
+        mm_data: Mapping[str, object],
+        mm_kwargs: Mapping[str, object],
+        tok_kwargs: Mapping[str, object],
+    ) -> BatchFeature:
+        if not mm_data:
+            return super()._call_hf_processor(prompt, mm_data, mm_kwargs, tok_kwargs)
+
+        # Keep vLLM's request-specific decoder control prefix. In particular,
+        # it carries the language selected at /v1/audio/transcriptions; the
+        # HF feature extractor only replaces the audio representation.
+        processed_outputs = super()._call_hf_processor(
+            prompt, dict(mm_data), mm_kwargs, tok_kwargs
+        )
+
+        feature_extractor = self._qaic_hf_processor.feature_extractor
+        feature_extractor.max_audio_clip_s = self.info.get_hf_config().max_audio_clip_s
+        feature_extractor.overlap_chunk_second = 0
+        audio_outputs = feature_extractor(
+            mm_data["audios"],
+            sampling_rate=feature_extractor.sampling_rate,
+            return_tensors="pt",
+        )
+        input_features = audio_outputs["input_features"]
+        processed_outputs["input_features"] = input_features.transpose(
+            1, 2
+        ).contiguous()
+        processed_outputs["length"] = audio_outputs["attention_mask"].sum(dim=-1)
+        return processed_outputs
+
 
 class QaicGemma3MultiModalProcessor(Gemma3MultiModalProcessor):
     def _call_hf_processor(
@@ -713,6 +771,12 @@ def register_qaic_custom_mm_processor(model_type: str):
             Gemma4ProcessingInfo,
             Gemma4DummyInputsBuilder,
             Gemma4ForConditionalGeneration,
+        ),
+        "cohere_asr": (
+            QaicCohereASRMultiModalProcessor,
+            CohereASRProcessingInfo,
+            CohereASRDummyInputsBuilder,
+            CohereAsrForConditionalGeneration,
         ),
     }
 
