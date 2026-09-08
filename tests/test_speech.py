@@ -5,12 +5,14 @@
 
 import numpy as np
 import pytest
+import torch
+from transformers import BatchFeature
 
 from vllm_qaic.speech import (
     is_qaic_speech_model,
     make_cohere_asr_decode_inputs,
     prepare_cohere_asr_qpc_inputs,
-    requires_real_audio_prefill,
+    requires_encoder_prefill_before_decode,
     strip_cohere_asr_renderer_bos,
 )
 
@@ -19,8 +21,8 @@ def test_qaic_speech_model_types():
     assert is_qaic_speech_model("whisper")
     assert is_qaic_speech_model("cohere_asr")
     assert not is_qaic_speech_model("qwen3_vl")
-    assert requires_real_audio_prefill("cohere_asr")
-    assert not requires_real_audio_prefill("whisper")
+    assert requires_encoder_prefill_before_decode("cohere_asr")
+    assert not requires_encoder_prefill_before_decode("whisper")
 
 
 def test_cohere_asr_strips_only_renderer_bos_and_renumbers_positions():
@@ -106,3 +108,58 @@ def test_cohere_asr_decode_inputs_follow_descriptor_shape():
     assert inputs["input_features"].dtype == np.float32
     np.testing.assert_array_equal(inputs["input_features"], 0)
     np.testing.assert_array_equal(inputs["feature_lengths"], [1])
+
+
+def test_cohere_asr_processor_extracts_audio_once(monkeypatch):
+    from types import SimpleNamespace
+
+    from vllm.model_executor.models.cohere_asr import CohereASRMultiModalProcessor
+    from vllm_qaic.model_loader.qaic_custom_mm_processor import (
+        QaicCohereASRMultiModalProcessor,
+    )
+
+    calls = {"vllm": 0, "native": 0}
+
+    def tokenize_only(self, prompt, mm_data, mm_kwargs, tok_kwargs):
+        calls["vllm"] += 1
+        assert mm_data == {}
+        return BatchFeature({"input_ids": torch.tensor([[7]])})
+
+    class NativeFeatureExtractor:
+        sampling_rate = 16_000
+        max_audio_clip_s = 35.0
+        overlap_chunk_second = 5.0
+
+        def __call__(self, audios, **kwargs):
+            calls["native"] += 1
+            assert len(audios) == 1
+            return BatchFeature(
+                {
+                    "input_features": torch.ones((1, 4, 128)),
+                    "attention_mask": torch.ones((1, 4), dtype=torch.int64),
+                }
+            )
+
+    monkeypatch.setattr(
+        CohereASRMultiModalProcessor, "_call_hf_processor", tokenize_only
+    )
+    processor = object.__new__(QaicCohereASRMultiModalProcessor)
+    processor.info = SimpleNamespace(
+        get_hf_config=lambda: SimpleNamespace(max_audio_clip_s=35.0)
+    )
+    feature_extractor = NativeFeatureExtractor()
+    processor.__dict__["_qaic_hf_processor"] = SimpleNamespace(
+        feature_extractor=feature_extractor
+    )
+
+    outputs = processor._call_hf_processor(
+        "prompt",
+        {"audios": [np.zeros(16_000, dtype=np.float32)]},
+        {},
+        {},
+    )
+
+    assert calls == {"vllm": 1, "native": 1}
+    assert outputs["input_features"].shape == (1, 128, 4)
+    np.testing.assert_array_equal(outputs["length"], [4])
+    assert feature_extractor.overlap_chunk_second == 5.0

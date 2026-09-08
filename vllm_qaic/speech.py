@@ -17,8 +17,8 @@ def is_qaic_speech_model(model_type: str) -> bool:
     return model_type in QAIC_SPEECH_MODEL_TYPES
 
 
-def requires_real_audio_prefill(model_type: str) -> bool:
-    """Whether a QPC must first receive request audio before decode can run."""
+def requires_encoder_prefill_before_decode(model_type: str) -> bool:
+    """Whether decode depends on retained state created by encoder prefill."""
     return model_type == "cohere_asr"
 
 

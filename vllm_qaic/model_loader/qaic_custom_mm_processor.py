@@ -136,16 +136,15 @@ class QaicCohereASRMultiModalProcessor(CohereASRMultiModalProcessor):
         if not mm_data:
             return super()._call_hf_processor(prompt, mm_data, mm_kwargs, tok_kwargs)
 
-        # Keep vLLM's request-specific decoder control prefix. In particular,
-        # it carries the language selected at /v1/audio/transcriptions; the
-        # HF feature extractor only replaces the audio representation.
+        # vLLM builds the request-specific decoder control prefix separately.
+        # Run its processor only for prompt tokenization, then extract audio
+        # once with the native HF feature extractor used by QEff.
         processed_outputs = super()._call_hf_processor(
-            prompt, dict(mm_data), mm_kwargs, tok_kwargs
+            prompt, {}, mm_kwargs, tok_kwargs
         )
 
         feature_extractor = self._qaic_hf_processor.feature_extractor
         feature_extractor.max_audio_clip_s = self.info.get_hf_config().max_audio_clip_s
-        feature_extractor.overlap_chunk_second = 0
         audio_outputs = feature_extractor(
             mm_data["audios"],
             sampling_rate=feature_extractor.sampling_rate,

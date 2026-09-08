@@ -65,12 +65,13 @@ Use `CohereLabs/cohere-transcribe-03-2026` for the multilingual model or
 `CohereLabs/cohere-transcribe-arabic-07-2026` for the separately trained Arabic
 model. A precompiled QPC must come from the same checkpoint that is served.
 
+### Use an existing QPC
+
 ```bash
 export QAIC_VISIBLE_DEVICES=0
 export VLLM_QAIC_QPC_PATH=/path/to/cohere-asr/qpc
 
 vllm serve CohereLabs/cohere-transcribe-03-2026 \
-  --trust-remote-code \
   --hf-overrides '{"max_source_positions":438}' \
   --max-num-seqs 1 \
   --max-model-len 512 \
@@ -83,8 +84,30 @@ vllm serve CohereLabs/cohere-transcribe-03-2026 \
   --additional-config '{"device_group":[0],"override_qaic_config":{"num_cores":8,"task":"transcription"}}'
 ```
 
-Omit `VLLM_QAIC_QPC_PATH` to export and compile a QPC from the served checkpoint
-before the server starts. Keep it set to reuse a matching precompiled QPC.
+### Build a QPC when the server starts
+
+Automatic compilation requires a QEfficient installation with Cohere ASR
+support. Until that support is released, install it from
+[QEfficient PR #1275](https://github.com/quic/efficient-transformers/pull/1275).
+
+```bash
+export QAIC_VISIBLE_DEVICES=0
+unset VLLM_QAIC_QPC_PATH
+
+vllm serve CohereLabs/cohere-transcribe-03-2026 \
+  --hf-overrides '{"max_source_positions":438}' \
+  --max-num-seqs 1 \
+  --max-model-len 512 \
+  --max-num-batched-tokens 3504 \
+  --long-prefill-token-threshold 512 \
+  --limit-mm-per-prompt '{"audio":1}' \
+  --mm-processor-cache-gb 0 \
+  --no-enable-prefix-caching \
+  --no-async-scheduling \
+  --additional-config '{"device_group":[0],"override_qaic_config":{"num_cores":8,"task":"transcription"}}'
+```
+
+The server exports and compiles the served checkpoint before accepting requests.
 
 Transcribe an audio file with the included client:
 

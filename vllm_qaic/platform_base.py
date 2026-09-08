@@ -461,13 +461,7 @@ class QaicPlatform(Platform):
 
         if cls.is_aot:
             model_type = model_config.hf_config.model_type
-            if model_type == "cohere_asr":
-                from vllm_qaic.model_loader.qaic_custom_mm_processor import (
-                    register_qaic_custom_mm_processor,
-                )
-
-                register_qaic_custom_mm_processor(model_type)
-            elif model_config.is_multimodal_model and not is_qaic_speech_model(
+            if model_config.is_multimodal_model and not is_qaic_speech_model(
                 model_type
             ):
                 cls._configure_multimodal_model(

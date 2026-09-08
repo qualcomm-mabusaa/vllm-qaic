@@ -33,7 +33,21 @@ def register():
     return "vllm_qaic.platform.QaicPlatform"
 
 
-def register_connector():
+def register_general_plugins():
+    # General plugins run in every API and engine-worker process after the
+    # platform is initialized. Model-specific registry overrides therefore
+    # survive the worker-process boundary.
+    from vllm_qaic.model_loader.qaic_custom_mm_processor import (
+        register_qaic_custom_mm_processor,
+    )
+
+    register_qaic_custom_mm_processor("cohere_asr")
+
     from vllm_qaic.distributed.kv_transfer.kv_connector import register_connector
 
     register_connector()
+
+
+def register_connector():
+    """Compatibility entry point for existing package installations."""
+    register_general_plugins()

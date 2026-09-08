@@ -312,7 +312,7 @@ setup(
     install_requires=get_requirements(),
     entry_points={
         "vllm.platform_plugins": ["qaic = vllm_qaic:register"],
-        "vllm.general_plugins": ["qaic_kv_connector = vllm_qaic:register_connector"],
+        "vllm.general_plugins": ["qaic = vllm_qaic:register_general_plugins"],
     },
     extras_require={
         "test": get_requirements("test.txt"),

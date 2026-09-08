@@ -1705,10 +1705,9 @@ def get_hf_model(
     }
     hf_config = model_config.hf_config
     qeff_trust_remote_code = model_config.trust_remote_code
-    if is_qaic_speech_model(hf_config.model_type):
-        # QEff transforms are registered against the upstream speech-model
-        # classes. Loading a Hub-provided duplicate with trust_remote_code
-        # would bypass those transforms and export the unmodified model.
+    if hf_config.model_type == "cohere_asr":
+        # QEff's Cohere ASR transforms target the native Transformers classes.
+        # Do not replace them with duplicate classes from Hub model code.
         from transformers import AutoConfig
 
         hf_config = AutoConfig.from_pretrained(
@@ -1733,10 +1732,9 @@ def get_hf_model(
             trust_remote_code=model_config.trust_remote_code,
             **hf_config.to_dict(),
         )
-        # Preserve this optional causal-LM setting when the upstream config
-        # exposes it. Encoder-decoder configs such as Cohere ASR do not.
-        if hasattr(pretrained_hf_config, "tie_word_embeddings"):
-            hf_config.tie_word_embeddings = pretrained_hf_config.tie_word_embeddings
+        # If tie_word_embeddings is not set correctly,
+        # single QPC's output would be wrong
+        hf_config.tie_word_embeddings = pretrained_hf_config.tie_word_embeddings
     override_qaic_config = (
         additional_config.get("override_qaic_config") if additional_config else None
     )
