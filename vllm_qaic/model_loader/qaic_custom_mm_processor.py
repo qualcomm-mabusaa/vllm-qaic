@@ -7,14 +7,12 @@
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from functools import cached_property
 from typing import Any
 
 import torch
 from packaging.version import Version as _Version
 from qwen_vl_utils import smart_resize
 from transformers import (
-    AutoProcessor,
     BatchFeature,
     Qwen2VLImageProcessorFast,
     TensorType,
@@ -43,12 +41,6 @@ from vllm.model_executor.models.gemma4_mm import (
     Gemma4ForConditionalGeneration,
     Gemma4MultiModalProcessor,
     Gemma4ProcessingInfo,
-)
-from vllm.model_executor.models.cohere_asr import (
-    CohereASRDummyInputsBuilder,
-    CohereASRMultiModalProcessor,
-    CohereASRProcessingInfo,
-    CohereAsrForConditionalGeneration,
 )
 from vllm.model_executor.models.transformers import (
     TransformersMultiModalForCausalLM,
@@ -112,50 +104,6 @@ Gemma4ForConditionalGeneration.get_placeholder_str = classmethod(
         "image" if modality == "image_embeds" else modality, i
     )
 )
-
-
-class QaicCohereASRMultiModalProcessor(CohereASRMultiModalProcessor):
-    """Use Cohere's HF processor so QPC inputs match QEff export semantics."""
-
-    @cached_property
-    def _qaic_hf_processor(self):
-        model_config = self.info.ctx.model_config
-        return AutoProcessor.from_pretrained(
-            model_config.model,
-            revision=model_config.revision,
-            trust_remote_code=False,
-        )
-
-    def _call_hf_processor(
-        self,
-        prompt: str,
-        mm_data: Mapping[str, object],
-        mm_kwargs: Mapping[str, object],
-        tok_kwargs: Mapping[str, object],
-    ) -> BatchFeature:
-        if not mm_data:
-            return super()._call_hf_processor(prompt, mm_data, mm_kwargs, tok_kwargs)
-
-        # vLLM builds the request-specific decoder control prefix separately.
-        # Run its processor only for prompt tokenization, then extract audio
-        # once with the native HF feature extractor used by QEff.
-        processed_outputs = super()._call_hf_processor(
-            prompt, {}, mm_kwargs, tok_kwargs
-        )
-
-        feature_extractor = self._qaic_hf_processor.feature_extractor
-        feature_extractor.max_audio_clip_s = self.info.get_hf_config().max_audio_clip_s
-        audio_outputs = feature_extractor(
-            mm_data["audios"],
-            sampling_rate=feature_extractor.sampling_rate,
-            return_tensors="pt",
-        )
-        input_features = audio_outputs["input_features"]
-        processed_outputs["input_features"] = input_features.transpose(
-            1, 2
-        ).contiguous()
-        processed_outputs["length"] = audio_outputs["attention_mask"].sum(dim=-1)
-        return processed_outputs
 
 
 class QaicGemma3MultiModalProcessor(Gemma3MultiModalProcessor):
@@ -728,6 +676,19 @@ class QaicQwen3_5MoeProcessingInfo(QaicQwen3VLProcessingInfo, Qwen3_5MoeProcessi
 
 
 def register_qaic_custom_mm_processor(model_type: str):
+    if model_type == "cohere_asr":
+        from vllm_qaic.model_loader.qaic_cohere_asr_processor import (
+            QAIC_COHERE_ASR_PROCESSOR,
+        )
+
+        processor_cls, info_cls, dummy_cls, model_cls = QAIC_COHERE_ASR_PROCESSOR
+        MULTIMODAL_REGISTRY.register_processor(
+            processor_cls,
+            info=info_cls,
+            dummy_inputs=dummy_cls,
+        )(model_cls)
+        return
+
     MODEL_PROCESSOR_MAP = {
         "qwen2_5_vl": (
             QaicQwen2_5_VLMultiModalProcessor,
@@ -770,12 +731,6 @@ def register_qaic_custom_mm_processor(model_type: str):
             Gemma4ProcessingInfo,
             Gemma4DummyInputsBuilder,
             Gemma4ForConditionalGeneration,
-        ),
-        "cohere_asr": (
-            QaicCohereASRMultiModalProcessor,
-            CohereASRProcessingInfo,
-            CohereASRDummyInputsBuilder,
-            CohereAsrForConditionalGeneration,
         ),
     }
 

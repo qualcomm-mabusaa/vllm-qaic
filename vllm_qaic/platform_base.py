@@ -460,19 +460,7 @@ class QaicPlatform(Platform):
 
         if cls.is_aot:
             model_type = model_config.hf_config.model_type
-            if model_type == "cohere_asr":
-                # Register Cohere's QPC-specific processor only for this model.
-                # General QAIC plugin startup must not import Cohere or torchaudio
-                # for unrelated models.
-                from vllm_qaic.model_loader.qaic_custom_mm_processor import (
-                    register_qaic_custom_mm_processor,
-                )
-
-                register_qaic_custom_mm_processor(model_type)
-            elif model_config.is_multimodal_model and model_type not in (
-                "whisper",
-                "cohere_asr",
-            ):
+            if model_config.is_multimodal_model and model_type != "whisper":
                 cls._configure_multimodal_model(
                     vllm_config, model_config, scheduler_config, model_type
                 )
