@@ -23,7 +23,7 @@ def test_cohere_asr_processor_extracts_audio_once(monkeypatch):
     from types import SimpleNamespace
 
     from vllm.model_executor.models.cohere_asr import CohereASRMultiModalProcessor
-    from vllm_qaic.model_loader.qaic_custom_mm_processor import (
+    from vllm_qaic.model_loader.qaic_cohere_asr_processor import (
         QaicCohereASRMultiModalProcessor,
     )
 
