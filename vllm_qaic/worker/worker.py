@@ -685,20 +685,14 @@ class QaicWorkerAoT(QaicWorker):
 
         self._configure_thread_parallelism()
 
-        if (
-            self.model_config.is_multimodal_model
-            and self.model_config.hf_config.model_type != "whisper"
-        ):
-            # EngineCore runs in a separate process from the API server, so
-            # register the QAIC processor before it builds the multimodal
-            # budget below, matching platform_base's shared registration path.
+        if self.model_config.hf_config.model_type == "cohere_asr":
+            # EngineCore has a process-local multimodal registry, so register
+            # the QAIC Cohere processor before constructing its model runner.
             from vllm_qaic.model_loader.qaic_custom_mm_processor import (
                 register_qaic_custom_mm_processor,
             )
 
-            register_qaic_custom_mm_processor(
-                self.model_config.hf_config.model_type
-            )
+            register_qaic_custom_mm_processor("cohere_asr")
 
         # Construct the model runner
         self.model_runner: QaicModelRunnerAoT = QaicModelRunnerAoT(

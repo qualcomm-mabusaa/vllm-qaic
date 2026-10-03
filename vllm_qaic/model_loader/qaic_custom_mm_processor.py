@@ -31,6 +31,9 @@ from transformers.utils.import_utils import (
 )
 
 from vllm_qaic.logger import init_logger
+from vllm_qaic.model_loader.qaic_cohere_asr_processor import (
+    QAIC_COHERE_ASR_PROCESSOR,
+)
 from vllm.model_executor.models.gemma3_mm import (
     Gemma3DummyInputsBuilder,
     Gemma3ForConditionalGeneration,
@@ -698,20 +701,8 @@ class QaicQwen3_5MoeProcessingInfo(QaicQwen3VLProcessingInfo, Qwen3_5MoeProcessi
 
 
 def register_qaic_custom_mm_processor(model_type: str):
-    if model_type == "cohere_asr":
-        from vllm_qaic.model_loader.qaic_cohere_asr_processor import (
-            QAIC_COHERE_ASR_PROCESSOR,
-        )
-
-        processor_cls, info_cls, dummy_cls, model_cls = QAIC_COHERE_ASR_PROCESSOR
-        MULTIMODAL_REGISTRY.register_processor(
-            processor_cls,
-            info=info_cls,
-            dummy_inputs=dummy_cls,
-        )(model_cls)
-        return
-
     MODEL_PROCESSOR_MAP = {
+        "cohere_asr": QAIC_COHERE_ASR_PROCESSOR,
         "qwen2_5_vl": (
             QaicQwen2_5_VLMultiModalProcessor,
             QaicQwen2_5_VLProcessingInfo,

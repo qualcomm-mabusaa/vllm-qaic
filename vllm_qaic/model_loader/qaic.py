@@ -806,10 +806,12 @@ class QaicCausalLM(nn.Module, SupportsLoRA):
                 # QEff keeps the encoder feature length while decode uses a
                 # one-frame dummy feature tensor. The cross-attention mask is
                 # derived from this original request length.
-                self.default_mm_kwargs["feature_lengths"] = chunk_inputs[
-                    "feature_lengths"
-                ].copy()
-                self.decode_batch_inputs.update(self.default_mm_kwargs)
+                feature_lengths = chunk_inputs["feature_lengths"]
+                batch_index = int(batch_indices[i])
+                for decode_inputs in self.decode_batch_inputs_by_k.values():
+                    decode_inputs["feature_lengths"][batch_index : batch_index + 1] = (
+                        feature_lengths
+                    )
             # chunk the request
             n_chunks: int = iids.shape[-1] // self.prefill_seq_len
 
@@ -823,7 +825,9 @@ class QaicCausalLM(nn.Module, SupportsLoRA):
                     # tokens. The QPC encoder runs only with the first token;
                     # its decode specialization reuses retained cross-attention
                     # state for the remaining prefix tokens.
-                    chunk_inputs.update(self.default_mm_kwargs)
+                    chunk_inputs["input_features"] = self.default_mm_kwargs[
+                        "input_features"
+                    ]
                 lower_idx = int(chunk * self.prefill_seq_len)
                 upper_idx = int((chunk + 1) * self.prefill_seq_len)
                 chunk_inputs["input_ids"] = iids[lower_idx:upper_idx].reshape(
